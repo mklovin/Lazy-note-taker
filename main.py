@@ -149,24 +149,20 @@ def build_blocks(data: dict) -> list[dict]:
     # 30-second interview answer callout
     blocks.append(callout_block(data.get("summary", ""), "🎯", "green_background"))
 
-    # Key Takeaways toggle
     takeaway_children = [bullet_block(t) for t in data.get("key_takeaways", [])]
     if takeaway_children:
         blocks.append(toggle_block("📌  Key Takeaways", "orange", takeaway_children))
 
-    # Sections (dynamically handles any number)
     for idx, section in enumerate(data.get("sections", [])):
         color = SECTION_COLORS[idx % len(SECTION_COLORS)]
         paragraphs = [p.strip() for p in section["content"].split("\n\n") if p.strip()]
         children = [paragraph_block(p) for p in paragraphs] or [paragraph_block(section["content"])]
         blocks.append(toggle_block(section["heading"], color, children))
 
-    # Further Reading toggle
     fr_children = [bullet_block(r) for r in data.get("further_reading", [])]
     if fr_children:
         blocks.append(toggle_block("📚  Further Reading", "gray", fr_children))
 
-    # Timestamp
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     blocks.append({
         "object": "block",
@@ -250,7 +246,6 @@ def research_topic(topic: str) -> dict:
 
     raw = response.content[0].text.strip()
 
-    # Strip accidental markdown fences
     if raw.startswith("```"):
         parts = raw.split("```")
         raw = parts[1].lstrip("json").strip() if len(parts) > 1 else raw

@@ -1,0 +1,33 @@
+name: Research Notion Topics
+
+on:
+  schedule:
+    # Runs every 3 hours  (minute 0 of hours 0,3,6,9,12,15,18,21 UTC)
+    - cron: "0 */3 * * *"
+
+  # Lets you trigger it manually from the GitHub Actions tab anytime
+  workflow_dispatch:
+
+jobs:
+  research:
+    name: Run research script
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run researcher
+        env:
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_API_KEY:     ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python main.py

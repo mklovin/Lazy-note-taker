@@ -75,13 +75,13 @@ def append_blocks(page_id: str, blocks: list[dict]) -> None:
             json={"children": blocks[i : i + 100]},
         )
         resp.raise_for_status()
-        time.sleep(0.3)   # stay inside Notion rate limits
+        time.sleep(0.3)
 
 
 # ── Block builders ────────────────────────────────────────────────────────────
 
 def rich(text: str, bold: bool = False, italic: bool = False, color: str = "default") -> dict:
-    """Single rich-text span. Notion caps text objects at 2 000 chars."""
+    """Single rich-text span."""
     return {
         "type": "text",
         "text": {"content": text[:2000]},
@@ -131,35 +131,32 @@ SECTION_COLORS = ["purple", "green", "blue", "red", "orange", "pink", "gray"]
 
 def build_blocks(data: dict) -> list[dict]:
     """
-    Turn the structured research JSON into a list of Notion blocks:
+    Notion page structure:
 
         ─────────────────────────────────
-        📋  Summary callout
-        📌  Key Takeaways  (toggle)
-            • …
-        [Section 1 heading]  (toggle)
-            Paragraph(s)…
-        [Section 2 heading]  (toggle)
-            …
-        📚  Further Reading  (toggle)
-            • …
-        🕐  Timestamp (italic, gray)
+        🎯  30-second answer  (callout)
+        📌  Key Takeaways     (toggle)
+        [Section 1]           (toggle)
+        [Section 2]           (toggle)
+        [Section 3]           (toggle)
+        [Section 4]           (toggle)
+        📚  Further Reading   (toggle)
+        🕐  Timestamp
         ─────────────────────────────────
     """
     blocks: list[dict] = [divider_block()]
 
-    # Summary
-    blocks.append(callout_block(data.get("summary", ""), "📋", "blue_background"))
+    # 30-second interview answer callout
+    blocks.append(callout_block(data.get("summary", ""), "🎯", "green_background"))
 
     # Key Takeaways toggle
     takeaway_children = [bullet_block(t) for t in data.get("key_takeaways", [])]
     if takeaway_children:
         blocks.append(toggle_block("📌  Key Takeaways", "orange", takeaway_children))
 
-    # Sections
+    # Sections (dynamically handles any number)
     for idx, section in enumerate(data.get("sections", [])):
         color = SECTION_COLORS[idx % len(SECTION_COLORS)]
-        # Support multi-paragraph content separated by blank lines
         paragraphs = [p.strip() for p in section["content"].split("\n\n") if p.strip()]
         children = [paragraph_block(p) for p in paragraphs] or [paragraph_block(section["content"])]
         blocks.append(toggle_block(section["heading"], color, children))
@@ -186,8 +183,12 @@ def build_blocks(data: dict) -> list[dict]:
 # ── Claude research ───────────────────────────────────────────────────────────
 
 RESEARCH_PROMPT = """\
-You are a thorough research assistant. Your job is to produce a detailed, well-structured
-summary on the topic below that someone can use as a personal knowledge note.
+You are a senior software engineer and technical interviewer with deep expertise across \
+software architecture, backend systems, and modern development practices.
+
+Your job is to prepare a thorough, interview-ready knowledge note on the topic below. \
+The person reading this is a software engineer who wants to deeply understand the topic \
+so they can answer interview questions confidently and apply the concept in real projects.
 
 Topic: "{topic}"
 
@@ -196,25 +197,44 @@ Return ONLY a raw JSON object — no markdown fences, no preamble, no trailing t
 Schema:
 {{
   "title": "Clean display title",
-  "summary": "2–3 sentence executive summary",
+  "summary": "A 2-3 sentence answer you could give in the first 30 seconds of an interview. Clear, confident, and direct.",
   "sections": [
     {{
       "heading": "Section title",
       "content": "Detailed content. Use blank lines to separate paragraphs."
     }}
   ],
-  "key_takeaways": ["point 1", "point 2", "point 3", "point 4", "point 5"],
-  "further_reading": ["Book / article / search query 1", "Resource 2", "Resource 3"]
+  "key_takeaways": [
+    "Concise point an interviewer would love to hear",
+    "Another strong point",
+    "Another strong point",
+    "Another strong point",
+    "Another strong point"
+  ],
+  "further_reading": ["Resource 1", "Resource 2", "Resource 3"]
 }}
 
-Include exactly 5 sections:
-1. Core Concepts
-2. How It Works (or Historical Background if more relevant)
-3. Practical Applications / Real-world Examples
-4. Common Misconceptions
-5. Related Topics & Next Steps
+Include exactly 4 sections in this order:
 
-Each section content should be 2–4 paragraphs (150–300 words). Be educational and precise.\
+1. Core Concepts
+   Explain the fundamental idea clearly. Define terms. Cover the why, not just the what.
+   Write as if explaining to someone smart who has not used it before.
+
+2. How It Works Under the Hood
+   Go deeper — internals, mechanics, lifecycle, memory, threading, whatever is relevant.
+   This is what separates a junior from a senior answer in an interview.
+
+3. When to Use It (and When Not To)
+   Real trade-offs. Compare with alternatives. When is this the right tool?
+   When would you avoid it and why? Give concrete scenarios.
+
+4. Common Interview Questions & Strong Answers
+   Write 3 interview questions on this topic with strong, detailed answers.
+   Format each as:
+   Q: [question]
+   A: [answer — 3 to 5 sentences, specific and technical]
+
+Each section should be 200-350 words. Be technical, precise, and opinionated where appropriate.\
 """
 
 
@@ -280,7 +300,7 @@ def main() -> None:
             logger.error(f"  ❌ Unexpected error for {topic!r}: {exc}")
             update_page_status(page_id, "Error")
 
-        time.sleep(1)   # brief pause between topics
+        time.sleep(1)
 
     logger.info("Research run complete")
     logger.info("─" * 60)

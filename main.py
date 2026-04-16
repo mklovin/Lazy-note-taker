@@ -54,6 +54,18 @@ def get_page_title(page: dict) -> str:
     return ""
 
 
+def get_page_type(page: dict) -> str:
+    """
+    Pull the Type select value out of a Notion page object.
+    Returns 'Research' by default if the column is empty or missing.
+    """
+    props = page.get("properties", {})
+    select = props.get("Type", {}).get("select")
+    if select and select.get("name"):
+        return select["name"].strip()
+    return "Research"
+
+
 def update_page_status(page_id: str, status: str) -> None:
     """Set the Status select property on a page (New / Done / Error)."""
     url = f"{NOTION_BASE}/pages/{page_id}"
@@ -81,7 +93,6 @@ def append_blocks(page_id: str, blocks: list[dict]) -> None:
 # ── Block builders ────────────────────────────────────────────────────────────
 
 def rich(text: str, bold: bool = False, italic: bool = False, color: str = "default") -> dict:
-    """Single rich-text span."""
     return {
         "type": "text",
         "text": {"content": text[:2000]},
@@ -130,39 +141,31 @@ SECTION_COLORS = ["purple", "green", "blue", "red", "orange", "pink", "gray"]
 
 
 def build_blocks(data: dict) -> list[dict]:
-    """
-    Notion page structure:
-
-        ─────────────────────────────────
-        🎯  30-second answer  (callout)
-        📌  Key Takeaways     (toggle)
-        [Section 1]           (toggle)
-        [Section 2]           (toggle)
-        [Section 3]           (toggle)
-        [Section 4]           (toggle)
-        📚  Further Reading   (toggle)
-        🕐  Timestamp
-        ─────────────────────────────────
-    """
     blocks: list[dict] = [divider_block()]
 
-    # 30-second interview answer callout
-    blocks.append(callout_block(data.get("summary", ""), "🎯", "green_background"))
+    # Summary / answer callout — emoji differs per mode (set in the data)
+    emoji = data.get("emoji", "🎯")
+    bg    = data.get("callout_bg", "green_background")
+    blocks.append(callout_block(data.get("summary", ""), emoji, bg))
 
+    # Key Takeaways toggle
     takeaway_children = [bullet_block(t) for t in data.get("key_takeaways", [])]
     if takeaway_children:
         blocks.append(toggle_block("📌  Key Takeaways", "orange", takeaway_children))
 
+    # Sections
     for idx, section in enumerate(data.get("sections", [])):
         color = SECTION_COLORS[idx % len(SECTION_COLORS)]
         paragraphs = [p.strip() for p in section["content"].split("\n\n") if p.strip()]
         children = [paragraph_block(p) for p in paragraphs] or [paragraph_block(section["content"])]
         blocks.append(toggle_block(section["heading"], color, children))
 
+    # Further Reading toggle
     fr_children = [bullet_block(r) for r in data.get("further_reading", [])]
     if fr_children:
         blocks.append(toggle_block("📚  Further Reading", "gray", fr_children))
 
+    # Timestamp
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     blocks.append({
         "object": "block",
@@ -176,7 +179,7 @@ def build_blocks(data: dict) -> list[dict]:
     return blocks
 
 
-# ── Claude research ───────────────────────────────────────────────────────────
+# ── Prompts ───────────────────────────────────────────────────────────────────
 
 RESEARCH_PROMPT = """\
 You are a senior software engineer and technical interviewer with deep expertise across \
@@ -192,6 +195,8 @@ Return ONLY a raw JSON object — no markdown fences, no preamble, no trailing t
 
 Schema:
 {{
+  "emoji": "🎯",
+  "callout_bg": "green_background",
   "title": "Clean display title",
   "summary": "A 2-3 sentence answer you could give in the first 30 seconds of an interview. Clear, confident, and direct.",
   "sections": [
@@ -214,18 +219,16 @@ Include exactly 4 sections in this order:
 
 1. Core Concepts
    Explain the fundamental idea clearly. Define terms. Cover the why, not just the what.
-   Write as if explaining to someone smart who has not used it before.
 
 2. How It Works Under the Hood
    Go deeper — internals, mechanics, lifecycle, memory, threading, whatever is relevant.
    This is what separates a junior from a senior answer in an interview.
 
 3. When to Use It (and When Not To)
-   Real trade-offs. Compare with alternatives. When is this the right tool?
-   When would you avoid it and why? Give concrete scenarios.
+   Real trade-offs. Compare with alternatives. Concrete scenarios.
 
 4. Common Interview Questions & Strong Answers
-   Write 3 interview questions on this topic with strong, detailed answers.
+   Write 3 interview questions with strong answers.
    Format each as:
    Q: [question]
    A: [answer — 3 to 5 sentences, specific and technical]
@@ -234,18 +237,82 @@ Each section should be 200-350 words. Be technical, precise, and opinionated whe
 """
 
 
-def research_topic(topic: str) -> dict:
-    """Ask Claude to research the topic and return parsed JSON."""
+QA_PROMPT = """\
+You are a senior software engineer in a technical interview. You are being asked the \
+question below and your job is to answer it perfectly — the way a strong senior engineer \
+would answer it in a real interview.
+
+Your answer must be complete, structured, and technically deep. Cover every important \
+angle the interviewer would expect. Do not be vague. Do not skip edge cases.
+
+Question: "{topic}"
+
+Return ONLY a raw JSON object — no markdown fences, no preamble, no trailing text.
+
+Schema:
+{{
+  "emoji": "💬",
+  "callout_bg": "blue_background",
+  "title": "Clean restatement of the question as a title",
+  "summary": "The ideal opening answer — 2 to 3 sentences. Direct and confident, the kind of answer that immediately signals seniority.",
+  "sections": [
+    {{
+      "heading": "Section title",
+      "content": "Detailed content. Use blank lines to separate paragraphs."
+    }}
+  ],
+  "key_takeaways": [
+    "A point that shows deep understanding",
+    "Another strong signal of seniority",
+    "Another strong point",
+    "Another strong point",
+    "Another strong point"
+  ],
+  "further_reading": ["Resource 1", "Resource 2", "Resource 3"]
+}}
+
+Include exactly 4 sections in this order:
+
+1. The Full Answer
+   Answer the question completely as a senior engineer would in an interview.
+   Be specific. Use real examples. Mention trade-offs where relevant.
+   This is the core of the response — make it thorough (250-350 words).
+
+2. The Deeper Angle (What Most Candidates Miss)
+   What do weaker candidates overlook when answering this?
+   Go into internals, edge cases, subtle nuances, or real-world implications.
+   This is what makes the answer stand out.
+
+3. Related Concepts to Know
+   What adjacent topics should you know to answer follow-up questions confidently?
+   Explain each briefly and how it connects to the main question.
+
+4. Follow-up Questions an Interviewer Might Ask
+   List 3 likely follow-up questions with strong answers.
+   Format each as:
+   Q: [follow-up question]
+   A: [answer — 3 to 5 sentences, specific and technical]
+
+Each section should be 200-300 words. Be direct, technical, and interview-sharp.\
+"""
+
+
+# ── Claude call ───────────────────────────────────────────────────────────────
+
+def research_topic(topic: str, mode: str) -> dict:
+    """Call Claude with the appropriate prompt based on mode."""
+    prompt_template = QA_PROMPT if mode == "Q&A" else RESEARCH_PROMPT
+    prompt = prompt_template.format(topic=topic)
+
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=4096,
-        messages=[
-            {"role": "user", "content": RESEARCH_PROMPT.format(topic=topic)}
-        ],
+        messages=[{"role": "user", "content": prompt}],
     )
 
     raw = response.content[0].text.strip()
 
+    # Strip accidental markdown fences
     if raw.startswith("```"):
         parts = raw.split("```")
         raw = parts[1].lstrip("json").strip() if len(parts) > 1 else raw
@@ -269,15 +336,16 @@ def main() -> None:
     for page in pages:
         page_id = page["id"]
         topic   = get_page_title(page)
+        mode    = get_page_type(page)   # "Research" or "Q&A"
 
         if not topic:
             logger.warning(f"Page {page_id} has no title — skipping")
             continue
 
-        logger.info(f"  → Researching: {topic!r}")
+        logger.info(f"  → [{mode}] Researching: {topic!r}")
 
         try:
-            data   = research_topic(topic)
+            data   = research_topic(topic, mode)
             blocks = build_blocks(data)
             append_blocks(page_id, blocks)
             update_page_status(page_id, "Done")
